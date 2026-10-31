@@ -166,7 +166,7 @@ describe('Context menu origin during a row-control walk', () => {
     const link = document.createElement('a');
     link.href = '#';
     navigableCells(harness.row('1'))[0].append(link);
-    harness.table.keyboardNavigation!.focusPosition({ key: wpOccurrenceKey('1'), cell: null, desiredColumn: null });
+    harness.table.keyboardNavigation.focusPosition({ key: wpOccurrenceKey('1'), cell: null, desiredColumn: null });
     await userEvent.tab();
     const menu = new WorkPackageTableContextMenu(harness.injector, '1', link, {}, harness.table);
     const menuButton = document.body.appendChild(document.createElement('button'));
@@ -327,7 +327,7 @@ describe('Context menu keyboard chords', () => {
     opened = vi.spyOn(harness.injector.get(OPContextMenuService), 'show');
   };
 
-  const focusKey = (key:string) => harness.table.keyboardNavigation!
+  const focusKey = (key:string) => harness.table.keyboardNavigation
     .focusPosition({ key, cell: null, desiredColumn: null });
 
   const press = (chord:string, element:HTMLElement) => fireEvent.keyDown(element, chords[chord]);
@@ -646,7 +646,7 @@ describe('Context menu focus return', () => {
   };
 
   const openOnCell = (workPackageId:string, index:number) => {
-    harness.table.keyboardNavigation!.focusPosition({ key: wpOccurrenceKey(workPackageId), cell: index, desiredColumn: index });
+    harness.table.keyboardNavigation.focusPosition({ key: wpOccurrenceKey(workPackageId), cell: index, desiredColumn: index });
     return openFromKeyboard(cellOf(workPackageId, index));
   };
 
@@ -680,7 +680,7 @@ describe('Context menu focus return', () => {
         : harness.row('1');
       expect(initialFocus).toHaveFocus();
       const link = within(harness.row('2')).getByRole('link', { name: 'js.label_open_context_menu' });
-      const navigation = harness.table.keyboardNavigation!;
+      const navigation = harness.table.keyboardNavigation;
       const origin = navigation.positionOfCell(link)!;
       link.focus();
       expect(link).toHaveFocus();
@@ -708,7 +708,7 @@ describe('Context menu focus return', () => {
     });
 
     it('Escape close returns to a row origin', async () => {
-      harness.table.keyboardNavigation!.focusPosition({ key: wpOccurrenceKey('2'), cell: null, desiredColumn: null });
+      harness.table.keyboardNavigation.focusPosition({ key: wpOccurrenceKey('2'), cell: null, desiredColumn: null });
       await openFromKeyboard(harness.row('2'));
 
       fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
@@ -727,7 +727,7 @@ describe('Context menu focus return', () => {
 
     it('Escape immediately after opening closes the menu, returns focus and keeps the selection', async () => {
       harness.click('2');
-      harness.table.keyboardNavigation!.focusPosition({ key: wpOccurrenceKey('2'), cell: 1, desiredColumn: 1 });
+      harness.table.keyboardNavigation.focusPosition({ key: wpOccurrenceKey('2'), cell: 1, desiredColumn: 1 });
       fireEvent.keyDown(cellOf('2', 1), { key: 'F10', shiftKey: true });
 
       fireEvent.keyDown(cellOf('2', 1), { key: 'Escape' });
@@ -822,7 +822,7 @@ describe('Context menu focus return', () => {
         window.addEventListener('error', collect);
         const shown = vi.spyOn(menu, 'show');
         try {
-          harness.table.keyboardNavigation!.focusPosition({ key: wpOccurrenceKey('2'), cell: 1, desiredColumn: 1 });
+          harness.table.keyboardNavigation.focusPosition({ key: wpOccurrenceKey('2'), cell: 1, desiredColumn: 1 });
           cellOf('2', 1).focus();
 
           fireEvent.keyDown(cellOf('2', 1), chord);
@@ -854,7 +854,7 @@ describe('Context menu focus return', () => {
       };
 
       it('opens a bare same-row contextmenu after an Escape close', async () => {
-        harness.table.keyboardNavigation!.focusPosition({ key: wpOccurrenceKey('2'), cell: null, desiredColumn: null });
+        harness.table.keyboardNavigation.focusPosition({ key: wpOccurrenceKey('2'), cell: null, desiredColumn: null });
         await openFromKeyboard(harness.row('2'));
         fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
 
@@ -865,7 +865,7 @@ describe('Context menu focus return', () => {
       });
 
       it('opens a bare same-row contextmenu after an action close', async () => {
-        harness.table.keyboardNavigation!.focusPosition({ key: wpOccurrenceKey('2'), cell: null, desiredColumn: null });
+        harness.table.keyboardNavigation.focusPosition({ key: wpOccurrenceKey('2'), cell: null, desiredColumn: null });
         await openFromKeyboard(harness.row('2'));
         await clickAction();
 
