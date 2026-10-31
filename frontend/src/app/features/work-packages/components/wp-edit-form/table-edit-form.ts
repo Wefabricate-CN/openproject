@@ -50,7 +50,7 @@ import { LazyInject } from 'core-app/shared/helpers/angular/lazy-inject.decorato
 import { ApiV3Service } from 'core-app/core/apiv3/api-v3.service';
 import { editFieldContainerClass } from 'core-app/shared/components/fields/display/display-field-renderer';
 import { WorkPackagesListService } from 'core-app/features/work-packages/components/wp-list/wp-list.service';
-import { FocusPosition } from 'core-app/features/work-packages/components/wp-fast-table/handlers/state/keyboard/focus-position';
+import { FocusPosition, samePosition } from 'core-app/features/work-packages/components/wp-fast-table/handlers/state/keyboard/focus-position';
 import { insideGrid } from '../wp-fast-table/handlers/state/keyboard/roving-tabindex';
 
 export const activeFieldContainerClassName = 'inline-edit--active-field';
@@ -255,7 +255,7 @@ export class TableEditForm extends EditForm<WorkPackageResource> {
   private validationMayFocus():boolean {
     const current = this.table.keyboardNavigation.position;
     const submitted = this.submittedPosition;
-    if (submitted && current && (current.key !== submitted.key || current.cell !== submitted.cell)) return false;
+    if (submitted && current && !samePosition(current, submitted)) return false;
 
     const active = document.activeElement;
     const resting = !active || active === document.body;

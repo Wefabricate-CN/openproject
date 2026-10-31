@@ -42,7 +42,7 @@ import type { TableEventComponent } from '../../table-handler-registry';
 import { activateRow } from '../../row/click-handler';
 import { rowKindOf } from '../../../helpers/row-expansion';
 import {
-  FocusPosition, initialPosition, NavigableRow, nearestPosition, computeNextPosition, reconcilePosition,
+  FocusPosition, initialPosition, NavigableRow, nearestPosition, computeNextPosition, reconcilePosition, samePosition,
 } from './focus-position';
 import {
   buildNavigableRows, headerRowKey, headerRowOf, totalsRowKey, totalsRowOf,
@@ -54,6 +54,7 @@ import { type ActivationKey, cellIntent, type KeyIntent } from './key-intent';
 import { insideGrid, navigableCellClassName, navigableCells, paintRovingTabindex } from './roving-tabindex';
 import { EditFieldHandler } from 'core-app/shared/components/fields/edit/editing-portal/edit-field-handler';
 import { CellInteraction } from './cell-interaction';
+import { FocusCursor } from './focus-cursor';
 
 export interface KeyboardNavigation {
   readonly position:FocusPosition|null;
@@ -106,9 +107,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
 
   @LazyInject() public wpTableSelection:WorkPackageViewSelectionService;
 
-  private current:FocusPosition|null = null;
-
-  private userPosition:FocusPosition|null = null;
+  private readonly cursor = new FocusCursor((position) => this.paintRoving(position && this.elementAt(position)));
 
   private owned = false;
 
@@ -123,9 +122,9 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
 
   private rendered:RenderedRows = { rows: [], groupBy: null };
 
-  private selecting!:KeyboardSelection;
+  private readonly selecting:KeyboardSelection;
 
-  private interaction!:CellInteraction;
+  private readonly interaction:CellInteraction;
 
   constructor(
     public readonly injector:Injector,
@@ -135,7 +134,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     const { destroyRef, scrollContainer } = table;
     table.attachKeyboardNavigation(this);
     this.selecting = new KeyboardSelection(table, this.wpTableSelection);
-    this.interaction = new CellInteraction(table);
+    this.interaction = new CellInteraction(table, this.cursor);
     const removedFromTabOrder = [scrollContainer, table.tableAndTimelineContainer]
       .filter((container, index, containers) => containers.indexOf(container) === index && !container.hasAttribute('tabindex'));
     removedFromTabOrder.forEach((container) => container.setAttribute('tabindex', '-1'));
@@ -147,8 +146,9 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     const onFocusin = (event:FocusEvent) => {
       const target = event.target as Node;
       this.focusLeftTable = !insideGrid(scrollContainer, target) && !table.editing.owns(target);
-      if (this.current && this.elementAt(this.current) === target) {
-        this.interaction.clearWalk();
+      const current = this.cursor.position;
+      if (current && this.elementAt(current) === target) {
+        this.cursor.clearWalk();
       }
       const from = event.relatedTarget;
       this.interaction.engageFocusedEditor(event.target);
@@ -160,7 +160,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     const onFocusout = (event:FocusEvent) => {
       const next = event.relatedTarget ?? event.target;
       this.focusLeftTable = !insideGrid(scrollContainer, next as Node) && !table.editing.owns(next as Node);
-      if (this.focusLeftTable) this.interaction.clearWalk();
+      if (this.focusLeftTable) this.cursor.clearWalk();
     };
     const onDocumentFocusin = (event:FocusEvent) => {
       const target = event.target as Node;
@@ -175,7 +175,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     scrollContainer.addEventListener('keydown', onKeydown);
     const onMousedown = (event:MouseEvent) => {
       this.pointerActive = true;
-      this.interaction.clearWalk();
+      this.cursor.clearWalk();
       this.recordPointerTarget(event.target);
     };
     const onPointerEnd = () => { this.pointerActive = false; };
@@ -196,7 +196,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
   }
 
   public get position():FocusPosition|null {
-    return this.current;
+    return this.cursor.position;
   }
 
   public get retainsFocus():boolean {
@@ -213,16 +213,14 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
 
   public recordPosition(position:FocusPosition):void {
     if (this.table.destroyed) return;
-    this.interaction.clearWalk();
-    this.current = position;
-    this.userPosition = position;
+    this.cursor.land(position, { user: true, paint: false });
   }
 
   public rememberWorkPackageAfterRender(workPackageId:string):void {
     if (this.table.destroyed) return;
     this.rememberedAfterRender = {
       position: { key: wpOccurrenceKey(workPackageId), cell: null, desiredColumn: null },
-      requestedFrom: this.userPosition,
+      requestedFrom: this.cursor.userPosition,
     };
   }
 
@@ -268,10 +266,11 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     if (this.table.destroyed) return false;
     const rows = buildNavigableRows(this.table);
     const originIndex = rows.findIndex((row) => row.key === origin.key);
-    const target = originIndex === -1 ? this.current : reconcilePosition(rows, origin, originIndex);
-    const userIndex = this.userPosition ? rows.findIndex((row) => row.key === this.userPosition!.key) : -1;
-    const user = userIndex === -1 ? null : reconcilePosition(rows, this.userPosition!, userIndex);
-    if (!target || !this.mayRestoreFocus(closing) || (user && !this.samePosition(user, target))) {
+    const target = originIndex === -1 ? this.cursor.position : reconcilePosition(rows, origin, originIndex);
+    const { userPosition } = this.cursor;
+    const userIndex = userPosition ? rows.findIndex((row) => row.key === userPosition.key) : -1;
+    const user = userPosition && userIndex !== -1 ? reconcilePosition(rows, userPosition, userIndex) : null;
+    if (!target || !this.mayRestoreFocus(closing) || (user && !samePosition(user, target))) {
       return false;
     }
 
@@ -332,13 +331,13 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     this.rendered = { rows, groupBy: this.groupBy() };
 
     if (requested && this.elementAt(requested)) {
-      this.userPosition = requested;
+      this.cursor.noteUserMove(requested);
       this.focusPosition(requested);
       return;
     }
 
     const remembered = this.rememberedAfterRender;
-    if (remembered && !this.samePosition(this.userPosition, remembered.requestedFrom)) {
+    if (remembered && this.cursor.userMovedSince(remembered.requestedFrom)) {
       this.rememberedAfterRender = null;
     } else if (remembered && this.elementAt(remembered.position)) {
       this.rememberedAfterRender = null;
@@ -352,13 +351,15 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     }
 
     this.interaction.reconcileWalk();
-    this.current = this.current && this.reconcile(rows, previous, this.current);
-    if (this.current && owned && this.mayRestoreFocus()) {
-      this.focusPosition(this.current);
+    const previousPosition = this.cursor.position;
+    this.cursor.reconcile(previousPosition && this.reconcile(rows, previous, previousPosition));
+    const current = this.cursor.position;
+    if (current && owned && this.mayRestoreFocus()) {
+      this.focusPosition(current);
       return;
     }
 
-    const painted = this.current ?? (retainStop ? this.retainedStop(rows) : null) ?? initialPosition(rows);
+    const painted = current ?? (retainStop ? this.retainedStop(rows) : null) ?? initialPosition(rows);
     this.paintRoving(painted && this.elementAt(painted));
   }
 
@@ -367,10 +368,6 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     const stop = this.table.scrollContainer.querySelector<HTMLElement>('tr[tabindex="0"], td[tabindex="0"], th[tabindex="0"]');
     const position = stop ? this.positionOf(stop) : null;
     return position && rows.some((row) => row.key === position.key && !row.hidden) ? position : null;
-  }
-
-  private samePosition(a:FocusPosition|null, b:FocusPosition|null):boolean {
-    return a === b || (!!a && !!b && a.key === b.key && a.cell === b.cell);
   }
 
   private reconcile(rows:NavigableRow[], previous:RenderedRows, position:FocusPosition):FocusPosition|null {
@@ -416,16 +413,15 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
   }
 
   private adoptFocus(target:HTMLElement, fromOutside:boolean):void {
-    if (this.current && this.elementAt(this.current) === target) {
-      this.interaction.clearWalk();
+    const current = this.cursor.position;
+    if (current && this.elementAt(current) === target) {
+      this.cursor.clearWalk();
       return;
     }
 
     const position = this.positionOf(target);
     if (position) {
-      this.interaction.clearWalk();
-      this.current = position;
-      this.userPosition = position;
+      this.cursor.land(position, { user: true, paint: false });
       this.paintRoving(target);
       return;
     }
@@ -434,8 +430,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
       this.interaction.reconcileWalk();
       const origin = this.interaction.originForControl(target);
       if (origin) {
-        this.current = origin;
-        this.userPosition = origin;
+        this.cursor.follow(origin);
       }
       return;
     }
@@ -452,8 +447,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
       return null;
     }
 
-    this.interaction.clearWalk();
-    this.current = position;
+    this.cursor.land(position, { user: false, paint: false });
     this.paintRoving(element);
     element.focus({ preventScroll: true });
     return element;
@@ -474,10 +468,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
 
     const position = this.positionOfCell(target);
     if (position) {
-      this.interaction.clearWalk();
-      this.current = position;
-      this.userPosition = position;
-      this.paintRoving(this.elementAt(position));
+      this.cursor.land(position, { user: true, paint: true });
     }
   }
 
@@ -515,7 +506,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
   private handleKeydown(event:KeyboardEvent):void {
     if (!insideGrid(this.table.scrollContainer, event.target as Node)) return;
 
-    const position = this.current;
+    const position = this.cursor.position;
     if (position && event.key === 'Tab' && event.target === this.elementAt(position)) {
       this.interaction.tabFromOrigin(event, position);
       return;
@@ -577,8 +568,8 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
 
   private extendSelection(position:FocusPosition, command:NavigationCommand):void {
     this.navigate(position, command);
-    const arrived = this.current;
-    if (arrived && (arrived.key !== position.key || arrived.cell !== position.cell)) {
+    const arrived = this.cursor.position;
+    if (arrived && !samePosition(arrived, position)) {
       this.selecting.extendTo(arrived);
     }
   }
@@ -598,7 +589,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
     const result = computeNextPosition(rows, position, command, this.pageSize(rows));
     switch (result.type) {
       case 'move':
-        this.userPosition = result.position;
+        this.cursor.noteUserMove(result.position);
         this.focusPosition(result.position);
         return true;
       case 'expand':
@@ -680,8 +671,9 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
 
   public repaintCurrentPosition():void {
     if (this.table.destroyed) return;
-    if (this.current) {
-      this.paintRoving(this.elementAt(this.current));
+    const current = this.cursor.position;
+    if (current) {
+      this.paintRoving(this.elementAt(current));
     }
   }
 
