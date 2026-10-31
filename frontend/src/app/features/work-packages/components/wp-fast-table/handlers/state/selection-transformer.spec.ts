@@ -39,7 +39,30 @@ import { WorkPackageTable } from '../../wp-fast-table';
 import { buildTable, runMutation, TableHarness } from '../../testing/table-harness';
 import { WorkPackageFixture } from '../../testing/work-package-fixture';
 import { SelectionTransformer } from './selection-transformer';
+import { TableSelectionFeedback } from './selection-feedback';
 import { wpOccurrenceKey } from '../../rendered-occurrence-ledger';
+
+const feedbackFor = (injector:Injector, lifetime:Injector) =>
+  new TableSelectionFeedback(injector.get(WorkPackageViewSelectionService), lifetime.get(DestroyRef));
+
+type TableStub = Pick<WorkPackageTable, 'injector'|'destroyRef'|'selectionFeedback'|'tableAndTimelineContainer'|'renderedRows'|'mutate'|'mutateWorkPackages'> & {
+  ledger:Pick<WorkPackageTable['ledger'], 'generation'> & Partial<Pick<WorkPackageTable['ledger'], 'size'>>;
+};
+
+const stubTable = (injector:Injector, lifetime:Injector, root:HTMLElement, overrides:Partial<TableStub> = {}):WorkPackageTable => {
+  const stub = {
+    injector,
+    destroyRef: lifetime.get(DestroyRef),
+    selectionFeedback: feedbackFor(injector, lifetime),
+    tableAndTimelineContainer: root,
+    renderedRows: [],
+    ledger: { generation: 1, size: 1 },
+    mutate: runMutation,
+    mutateWorkPackages: (_ids, change) => change(),
+    ...overrides,
+  } satisfies TableStub;
+  return stub as unknown as WorkPackageTable;
+};
 
 describe('SelectionTransformer', () => {
   usePlatform('Linux');
@@ -87,13 +110,7 @@ describe('SelectionTransformer', () => {
       </div>
     `;
     document.body.append(root);
-    const table = {
-      injector,
-      destroyRef: lifetime.get(DestroyRef),
-      tableAndTimelineContainer: root,
-      renderedRows,
-      ledger: { generation: 1, size: 1 }, mutate: runMutation, mutateWorkPackages: (_ids:Iterable<string>, change:() => void) => change(),
-    } as unknown as WorkPackageTable;
+    const table = stubTable(injector, lifetime, root, { renderedRows });
     new SelectionTransformer(injector, table);
 
     fireEvent.keyDown(document.body, { key: 'Escape' });
@@ -131,7 +148,7 @@ describe('SelectionTransformer', () => {
       const lifetime = Injector.create({ providers: [], parent: injector });
       const root = document.createElement('div');
       document.body.append(root);
-      new SelectionTransformer(injector, { injector, destroyRef: lifetime.get(DestroyRef), tableAndTimelineContainer: root, renderedRows: [], ledger: { generation: 1, size: 1 }, mutate: runMutation, mutateWorkPackages: (_ids:Iterable<string>, change:() => void) => change() } as unknown as WorkPackageTable);
+      new SelectionTransformer(injector, stubTable(injector, lifetime, root));
       return { injector, lifetime, root, reset };
     };
     const first = build();
@@ -166,7 +183,7 @@ describe('SelectionTransformer', () => {
     const root = document.createElement('div');
     root.innerHTML = '<div class="wp-table--row" tabindex="0" data-work-package-id="2" data-class-identifier="wp-row-2">Row</div>';
     document.body.append(root);
-    new SelectionTransformer(injector, { injector, destroyRef: lifetime.get(DestroyRef), tableAndTimelineContainer: root, renderedRows: [], ledger: { generation: 1, size: 1 }, mutate: runMutation, mutateWorkPackages: (_ids:Iterable<string>, change:() => void) => change() } as unknown as WorkPackageTable);
+    new SelectionTransformer(injector, stubTable(injector, lifetime, root));
     selection.initializeSelection(['2']);
 
     const allowed = fireEvent.keyDown(root.firstElementChild!, {
@@ -193,9 +210,7 @@ describe('SelectionTransformer', () => {
     const lifetime = Injector.create({ providers: [], parent: injector });
     const root = document.createElement('div');
     document.body.append(root);
-    new SelectionTransformer(injector, {
-      injector, destroyRef: lifetime.get(DestroyRef), tableAndTimelineContainer: root, renderedRows: [], ledger, mutate: runMutation, mutateWorkPackages: (_ids:Iterable<string>, change:() => void) => change(),
-    } as unknown as WorkPackageTable);
+    new SelectionTransformer(injector, stubTable(injector, lifetime, root, { ledger }));
 
     const stale = [{ workPackageId: '2', classIdentifier: 'wp-card-2', hidden: false }];
     tableRendered.next(stale);
