@@ -42,7 +42,7 @@ import type { TableEventComponent } from '../../table-handler-registry';
 import { activateRow } from '../../row/click-handler';
 import { rowKindOf } from '../../../helpers/row-expansion';
 import {
-  FocusPosition, initialPosition, NavigableRow, nearestPosition, computeNextPosition, reconcilePosition, samePosition,
+  FocusPosition, initialPosition, NavigableRow, nearestPosition, computeNextPosition, reconcilePosition, rowPosition, samePosition,
 } from './focus-position';
 import {
   buildNavigableRows, headerRowKey, headerRowOf, totalsRowKey, totalsRowOf,
@@ -214,7 +214,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
   public rememberWorkPackageAfterRender(workPackageId:string):void {
     if (this.table.destroyed) return;
     this.rememberedAfterRender = {
-      position: { key: wpOccurrenceKey(workPackageId), cell: null, desiredColumn: null },
+      position: rowPosition(wpOccurrenceKey(workPackageId)),
       requestedFrom: this.cursor.userPosition,
     };
   }
@@ -307,7 +307,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
   private requestedPosition():FocusPosition|null {
     let requested:FocusPosition|null = null;
     this.wpTableFocus.ifShouldFocus((workPackageId) => {
-      requested = { key: wpOccurrenceKey(workPackageId), cell: null, desiredColumn: null };
+      requested = rowPosition(wpOccurrenceKey(workPackageId));
     });
     return requested;
   }
@@ -368,7 +368,7 @@ export class KeyboardNavigationTransformer implements KeyboardNavigation {
   private reconcile(rows:NavigableRow[], previous:RenderedRows, position:FocusPosition):FocusPosition|null {
     if (!rows.some((row) => row.kind !== 'header' && row.kind !== 'totals')) {
       const header = rows.find((row) => row.kind === 'header');
-      return header ? { key: header.key, cell: null, desiredColumn: null } : null;
+      return header ? rowPosition(header.key) : null;
     }
 
     const previousIndex = previous.rows.findIndex((row) => row.key === position.key);
