@@ -48,6 +48,7 @@ import { type OccurrenceKey, RenderedOccurrenceLedger } from './rendered-occurre
 import { WorkPackageTableEditingContext } from './wp-table-editing';
 import type { WorkPackageTableRow } from './wp-table.interfaces';
 import type { KeyboardNavigation } from './handlers/state/keyboard/keyboard-navigation-transformer';
+import type { RowMover } from './handlers/state/row-mover';
 import { TableSelectionFeedback } from './handlers/state/selection-feedback';
 import { WorkPackageViewSelectionService } from 'core-app/features/work-packages/routing/wp-view-base/view-services/wp-view-selection.service';
 import type { RowPositionEvidence } from './semantics/table-row-positions';
@@ -116,6 +117,16 @@ export class WorkPackageTable {
     this.navigation = navigation;
   }
 
+  private mover:RowMover|null = null;
+
+  public get rowMover():RowMover|null {
+    return this.mover;
+  }
+
+  public attachRowMover(mover:RowMover):void {
+    this.mover = mover;
+  }
+
   public readonly selectionFeedback = new TableSelectionFeedback(this.injector.get(WorkPackageViewSelectionService), this.destroyRef);
 
   public readonly rows = new RowClassifier(this);
@@ -137,6 +148,8 @@ export class WorkPackageTable {
   private pendingRender:PendingRender|null = null;
 
   private schedulingRender = false;
+
+  private renderWaiters:(() => void)[] = [];
 
   // Work package editing context handler in the table, which handles open forms
   // and their contexts
@@ -167,6 +180,16 @@ export class WorkPackageTable {
     return this.schedulingRender || this.pendingRender !== null;
   }
 
+  /** Resolves once the pending render has committed, at once without one, and on destroy; never rejects, so callers check `destroyed`. */
+  public whenRendered():Promise<void> {
+    if (this.destroyed || !this.hasPendingRender) return Promise.resolve();
+    return new Promise((resolve) => { this.renderWaiters.push(resolve); });
+  }
+
+  private releaseRenderWaiters():void {
+    this.renderWaiters.splice(0).forEach((resolve) => resolve());
+  }
+
   public destroy():void {
     if (this.destroyed) return;
     this.pendingRender = null;
@@ -174,6 +197,7 @@ export class WorkPackageTable {
       this.lifetimeInjector.destroy();
     } finally {
       runCleanup(() => this.editing.reset());
+      this.releaseRenderWaiters();
     }
   }
 
@@ -359,6 +383,7 @@ export class WorkPackageTable {
 
   private publishRendered():void {
     this.querySpace.tableRendered.putValue(this.ledger.snapshot());
+    if (!this.hasPendingRender) this.releaseRenderWaiters();
   }
 
   setGroupsCollapseState(newState:Record<string, boolean>) {
