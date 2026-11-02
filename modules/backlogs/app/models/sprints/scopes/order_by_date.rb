@@ -30,12 +30,18 @@
 module Sprints::Scopes::OrderByDate
   extend ActiveSupport::Concern
 
+  # Reversing this ordering is not left to +reverse_order+, which refuses the raw SQL the null
+  # placement needs.
+  DIRECTIONS = { asc: "ASC NULLS LAST", desc: "DESC NULLS FIRST" }.freeze
+
   class_methods do
-    def order_by_date
-      order(Arel.sql("COALESCE(sprints.started_at, sprints.start_date) ASC NULLS LAST"),
-            Arel.sql("COALESCE(sprints.completed_at, sprints.finish_date) ASC NULLS LAST"),
-            arel_table[:name].asc,
-            arel_table[:id].asc)
+    def order_by_date(direction = :asc)
+      dated = DIRECTIONS.fetch(direction)
+
+      order(Arel.sql("COALESCE(sprints.started_at, sprints.start_date) #{dated}"),
+            Arel.sql("COALESCE(sprints.completed_at, sprints.finish_date) #{dated}"),
+            arel_table[:name].public_send(direction),
+            arel_table[:id].public_send(direction))
     end
   end
 end

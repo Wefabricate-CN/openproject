@@ -60,6 +60,11 @@ RSpec.describe Sprints::Scopes::OrderByDate do
     expect(Sprint.order_by_date).to eq([completed_sprint, active_sprint, planned_sprint, no_dates_sprint])
   end
 
+  it "turns the whole ordering around when asked to descend, undated sprints included" do
+    expect(Sprint.order_by_date(:desc))
+      .to eq([no_dates_sprint, planned_sprint, active_sprint, completed_sprint])
+  end
+
   it "prefers the actual start over the planned start date" do
     started_late = create(:sprint, project:, name: "Started late", status: :completed,
                                    start_date: Date.new(2025, 10, 1), finish_date: Date.new(2025, 10, 31),
