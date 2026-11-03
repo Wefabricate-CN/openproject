@@ -1,0 +1,45 @@
+# Portainer stack for OpenProject on wf02 (Suzhou): https://portainer.wf02.wefabricate.cn
+# Stacks > Add stack > Web editor: name it "openproject", paste this file, and add
+# the environment variable OPENPROJECT_SECRET_KEY_BASE (generate with
+# `openssl rand -hex 64`; never change it afterwards, it signs sessions and tokens).
+# Deploy, then put the stack's id (its URL ends in ?id=<n>) into the repo variable
+# PORTAINER_STACK_ID_WF02; every build of the wf02 branch then redeploys it.
+#
+# Site conventions, as in the wfrfui / internal-dashboard stacks: join the external
+# `webproxy` network that Traefik watches; `myresolver` holds the
+# *.wf02.wefabricate.cn wildcard cert, so a new host needs no DNS or ACME work.
+#
+# The all-in-one image carries its own Postgres and memcached; both named volumes
+# below must survive redeploys, so never remove the stack with "remove volumes".
+services:
+  openproject:
+    image: ghcr.io/wefabricate-cn/openproject:wf02
+    container_name: openproject
+    expose:
+      - "80"
+    environment:
+      OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET_KEY_BASE}
+      OPENPROJECT_HOST__NAME: openproject.wf02.wefabricate.cn
+      OPENPROJECT_HTTPS: "true"
+      OPENPROJECT_DEFAULT__LANGUAGE: zh-CN
+    volumes:
+      - openproject-pgdata:/var/openproject/pgdata
+      - openproject-assets:/var/openproject/assets
+    networks:
+      - webproxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=webproxy"
+      - "traefik.http.routers.openproject-wf02.entrypoints=websecure"
+      - "traefik.http.routers.openproject-wf02.rule=Host(`openproject.wf02.wefabricate.cn`)"
+      - "traefik.http.routers.openproject-wf02.tls.certresolver=myresolver"
+      - "traefik.http.services.openproject-wf02.loadbalancer.server.port=80"
+    restart: always
+
+volumes:
+  openproject-pgdata:
+  openproject-assets:
+
+networks:
+  webproxy:
+    external: true
