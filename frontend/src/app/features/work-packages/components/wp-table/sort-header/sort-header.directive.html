@@ -15,15 +15,17 @@
         <!--suppress XmlDuplicatedId -->
         @if (sortable) {
           <a href="#"
-            [ngClass]="[directionClass && 'sort', directionClass]"
+            [class.sort]="!!directionClass"
+            [class.asc]="directionClass === 'asc'"
+            [class.desc]="directionClass === 'desc'"
             lang-attribute
-            lang="{{locale}}"
-            id="{{ headerColumn.id }}"
+            lang="{{locale()}}"
+            id="{{ headerColumn().id }}"
             tabindex="-1"
-          rel="nofollow">{{headerColumn.name}}</a>
+          rel="nofollow">{{headerColumn().name}}</a>
         }
         @if (!sortable) {
-          <a>{{headerColumn.name}}</a>
+          <a>{{headerColumn().name}}</a>
         }
         @if (displayDropdownIcon) {
           <op-icon icon-classes="dropdown-indicator icon-small icon-pulldown"
@@ -34,7 +36,7 @@
     }
     @case ('relation') {
       <span class="generic-table--sort-header">
-        <a [attr.title]="headerColumn.name">
+        <a [attr.title]="headerColumn().name">
           <op-icon icon-classes="icon-context icon-relations relations-header--icon" />
           {{columnName}}
         </a>
@@ -55,15 +57,17 @@
         <!--suppress XmlDuplicatedId -->
         @if (sortable) {
           <a href="#"
-            [ngClass]="[directionClass && 'sort', directionClass]"
+            [class.sort]="!!directionClass"
+            [class.asc]="directionClass === 'asc'"
+            [class.desc]="directionClass === 'desc'"
             lang-attribute
-            lang="{{locale}}"
-            id="{{ headerColumn.id }}"
+            lang="{{locale()}}"
+            id="{{ headerColumn().id }}"
             tabindex="-1"
-          rel="nofollow">{{headerColumn.name}}</a>
+          rel="nofollow">{{headerColumn().name}}</a>
         }
         @if (!sortable) {
-          <a>{{headerColumn.name}}</a>
+          <a>{{headerColumn().name}}</a>
         }
         @if (baselineIncompatible) {
           <span
