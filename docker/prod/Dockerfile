@@ -141,8 +141,13 @@ ENV OPENPROJECT_EDITION=bim
 # -------------------------------------
 # all-in-one (public)
 # -------------------------------------
-FROM app-runtime AS all-in-one
+# Wefabricate wf02: the all-in-one software is installed on runtime-base before the app
+# arrives, and the app arrives in three layers (gems, compiled assets, code). A change to
+# the code then rebuilds only the code layer, so the WF02 host pulls that layer instead of
+# the whole image. Only the Postgres 17 server is installed, as the data volume is 17.
+FROM runtime-base AS all-in-one-base
 
+ENV PGVERSION_CHOICES="17"
 ENV OPENPROJECT_RAILS__CACHE__STORE=memcache
 ENV DATABASE_URL=postgres://openproject:openproject@127.0.0.1/openproject
 ENV PGDATA=/var/openproject/pgdata
@@ -153,11 +158,28 @@ COPY --from=openproject/hocuspocus:17.9.6 --chown=$APP_USER:$APP_USER /app /opt/
 COPY --from=build-base /usr/local/bin/node /usr/local/bin/node
 COPY --from=build-base /usr/local/lib/node_modules /usr/local/lib/node_modules
 
+COPY ./docker/prod/setup/postinstall-onprem.sh ./docker/prod/setup/postinstall-onprem.sh
 RUN ./docker/prod/setup/postinstall-onprem.sh && \
   ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
   ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && \
   ln -sf ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack && \
   ln -s /app/docker/prod/setup/.irbrc /root/
+
+# Build-only: the app without the parts that get a layer of their own below.
+FROM app-build AS app-build-code
+RUN rm -rf vendor/bundle public/assets
+
+FROM all-in-one-base AS all-in-one
+
+# Gems and assets change far less often than the code; a COPY whose content is unchanged
+# hits the cache and keeps its layer digest, even when app-build itself was rebuilt.
+COPY --chown=$APP_USER:$APP_USER --from=app-build /app/vendor/bundle /app/vendor/bundle
+COPY --chown=$APP_USER:$APP_USER --from=app-build /app/public/assets /app/public/assets
+COPY --chown=$APP_USER:$APP_USER --from=app-build-code /app /app
+
+RUN ./docker/prod/setup/postinstall-common.sh && \
+  cp ./config/database.production.yml config/database.yml && \
+  ln -s $APP_PATH/docker/prod/setup/.irbrc /home/$APP_USER/
 
 # Expose ports for apache and postgres
 EXPOSE 80
