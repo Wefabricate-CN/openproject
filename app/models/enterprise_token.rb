@@ -30,6 +30,11 @@
 class EnterpriseToken < ApplicationRecord
   EXPIRING_SOON_DAYS = 30
 
+  # Wefabricate wf02: every feature of every plan is available without an enterprise token.
+  # Every backend gate ends in allows_to? and the frontend reads available_features, so this
+  # is the one place.
+  UNLOCKED_FEATURES = OpenProject::Token::FEATURES_PER_PLAN.values.reduce(:|).to_set.freeze
+
   class << self
     def all_tokens
       all.sort_by(&:sort_key)
@@ -54,6 +59,8 @@ class EnterpriseToken < ApplicationRecord
     end
 
     def allows_to?(feature)
+      return true if UNLOCKED_FEATURES.include?(feature&.to_sym)
+
       active_tokens.any? { |token| Authorization::EnterpriseService.new(token).call(feature).result }
     end
 
@@ -66,11 +73,12 @@ class EnterpriseToken < ApplicationRecord
     end
 
     def available_features
-      active_tokens.map(&:available_features).inject(Set.new, :|)
+      active_tokens.map(&:available_features).inject(UNLOCKED_FEATURES, :|)
     end
 
+    # the unlocked features count as owned, so they never show as trialling
     def non_trialling_features
-      active_non_trial_tokens.map(&:available_features).inject(Set.new, :|)
+      active_non_trial_tokens.map(&:available_features).inject(UNLOCKED_FEATURES, :|)
     end
 
     def trialling_features
