@@ -32,9 +32,8 @@ import { WorkPackageResource } from 'core-app/features/hal/resources/work-packag
 import { WorkPackageViewOrderService } from 'core-app/features/work-packages/routing/wp-view-base/view-services/wp-view-order.service';
 import { WorkPackageViewHierarchiesService } from 'core-app/features/work-packages/routing/wp-view-base/view-services/wp-view-hierarchy.service';
 import { WorkPackageContextMenuHelperService } from 'core-app/features/work-packages/components/wp-table/context-menu-helper/wp-context-menu-helper.service';
-import { OPContextMenuService } from 'core-app/shared/components/op-context-menu/op-context-menu.service';
+import { OpActionMenuService } from 'core-app/shared/components/op-context-menu/action-menu/op-action-menu.service';
 import { WorkPackageTableContextMenu } from 'core-app/shared/components/op-context-menu/wp-context-menu/wp-table-context-menu.directive';
-import { registerContextMenu } from 'core-app/shared/components/op-context-menu/testing/register-context-menu';
 import { buildTable, TableHarness, type TableHarnessOptions } from '../../testing/table-harness';
 import { wpOccurrenceKey } from '../../rendered-occurrence-ledger';
 import { headerRowKey, totalsRowKey } from '../../row-keys';
@@ -61,7 +60,7 @@ describe('Context menu entry', () => {
         menuTargets.push(workPackages.map((wp) => wp.id!));
         return [];
       });
-    opened = vi.spyOn(harness.injector.get(OPContextMenuService), 'show');
+    opened = vi.spyOn(harness.injector.get(OpActionMenuService), 'show').mockImplementation(() => undefined);
   };
 
   beforeEach(() => mount());
@@ -313,7 +312,7 @@ describe('Context menu entry from the actions column button', () => {
         menuTargets.push(workPackages.map((wp) => wp.id!));
         return [];
       });
-    opened = vi.spyOn(harness.injector.get(OPContextMenuService), 'show');
+    opened = vi.spyOn(harness.injector.get(OpActionMenuService), 'show').mockImplementation(() => undefined);
   });
 
   afterEach(() => harness.destroy());
@@ -366,7 +365,7 @@ describe('Context menu entry on the inline-create row', () => {
     inlineCreateRow = harness.addInlineCreateRow();
     harness.click('2');
 
-    opened = vi.spyOn(harness.injector.get(OPContextMenuService), 'show');
+    opened = vi.spyOn(harness.injector.get(OpActionMenuService), 'show').mockImplementation(() => undefined);
   });
 
   afterEach(() => harness.destroy());
@@ -439,7 +438,7 @@ describe('Context menu keyboard chords', () => {
         menuTargets.push(workPackages.map((wp) => wp.id!));
         return [];
       });
-    opened = vi.spyOn(harness.injector.get(OPContextMenuService), 'show');
+    opened = vi.spyOn(harness.injector.get(OpActionMenuService), 'show').mockImplementation(() => undefined);
   };
 
   const focusKey = (key:string) => harness.table.keyboardNavigation
@@ -714,10 +713,12 @@ describe('Context menu keyboard chords', () => {
   });
 });
 
+const MENU = 'op-action-menu';
+const MENU_ITEM = `${MENU} [role="menuitem"]`;
+
 describe('Context menu focus return', () => {
   let harness:TableHarness;
-  let menu:OPContextMenuService;
-  let unregister:() => void;
+  let menu:OpActionMenuService;
   let action:() => void;
   let page:HTMLElement;
 
@@ -728,7 +729,6 @@ describe('Context menu focus return', () => {
       workPackages: [{ id: '1' }, { id: '2' }, { id: '3' }],
       columns: ['id', 'subject', 'status'],
       productionMarkup: true,
-      providers: [OPContextMenuService],
       ...options,
       configuration: { contextMenuEnabled: true, ...options.configuration },
     });
@@ -738,8 +738,7 @@ describe('Context menu focus return', () => {
     page.id = 'wrapper';
     page.textContent = 'Blank page';
     document.body.append(page);
-    menu = harness.injector.get(OPContextMenuService);
-    unregister = registerContextMenu(menu);
+    menu = harness.injector.get(OpActionMenuService);
     action = () => undefined;
     vi.spyOn(harness.injector.get(WorkPackageContextMenuHelperService), 'getPermittedActions')
       .mockReturnValue([{ key: 'test-action', text: 'Test action', link: '#' }]);
@@ -754,7 +753,7 @@ describe('Context menu focus return', () => {
     target.focus();
     fireEvent.keyDown(target, { key: 'F10', shiftKey: true });
     return waitFor(() => {
-      const item = document.querySelector<HTMLElement>('.op-context-menu--overlay .menu-item')!;
+      const item = document.querySelector<HTMLElement>(MENU_ITEM)!;
       expect(item).toHaveFocus();
       return item;
     });
@@ -766,7 +765,7 @@ describe('Context menu focus return', () => {
   };
 
   const clickAction = async () => {
-    const item = await waitFor(() => within(document.querySelector<HTMLElement>('.op-context-menu--overlay')!)
+    const item = await waitFor(() => within(document.querySelector<HTMLElement>(MENU)!)
       .getByRole('menuitem', { name: 'Test action' }));
     fireEvent.click(item);
   };
@@ -776,7 +775,6 @@ describe('Context menu focus return', () => {
     await nextFrame();
     await nextFrame();
     menu.close();
-    unregister();
     page.remove();
     vi.restoreAllMocks();
     await harness.destroy();
@@ -801,7 +799,7 @@ describe('Context menu focus return', () => {
       expect(link).toHaveFocus();
 
       await userEvent.keyboard('{Enter}');
-      await waitFor(() => expect(document.querySelector('.op-context-menu--overlay .menu-item')).toHaveFocus());
+      await waitFor(() => expect(document.querySelector(MENU_ITEM)).toHaveFocus());
       await userEvent.keyboard('{Escape}');
 
       expect(menu.active).toBeNull();
@@ -851,30 +849,28 @@ describe('Context menu focus return', () => {
       await nextFrame();
       await nextFrame();
       await nextFrame();
-      expect(document.querySelector('.op-context-menu--overlay .menu-item')).toBeNull();
+      expect(document.querySelector(MENU_ITEM)).toBeNull();
       expect(cellOf('2', 1)).toHaveFocus();
       expect(harness.selection.getSelectedWorkPackageIds()).toEqual(['2']);
     });
 
     it('a click outside closes a right-click menu without pulling focus into the table', async () => {
       fireEvent.contextMenu(cellOf('2', 1));
-      await waitFor(() => expect(document.querySelector('.op-context-menu--overlay .menu-item')).toHaveFocus());
+      await waitFor(() => expect(document.querySelector(MENU_ITEM)).toHaveFocus());
 
-      fireEvent.click(page);
+      fireEvent.pointerDown(page);
 
       expect(menu.active).toBeNull();
       expect(document.body).toHaveFocus();
     });
 
-    it('a scroll closes a keyboard-opened menu without moving focus or scrolling', async () => {
-      await openOnCell('2', 1);
-      const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView');
+    it('a scroll keeps a keyboard-opened menu open with focus inside it', async () => {
+      const item = await openOnCell('2', 1);
 
       fireEvent.scroll(page);
 
-      expect(menu.active).toBeNull();
-      expect(document.body).toHaveFocus();
-      expect(scrolled).not.toHaveBeenCalled();
+      expect(menu.active).not.toBeNull();
+      expect(item).toHaveFocus();
     });
 
     it('origin row removed by the action: focus lands on the reconciled neighbor', async () => {
@@ -943,9 +939,9 @@ describe('Context menu focus return', () => {
           fireEvent.keyDown(cellOf('2', 1), chord);
           fireEvent.keyDown(cellOf('2', 1), { ...chord, repeat: true });
 
-          await waitFor(() => expect(document.querySelector('.op-context-menu--overlay .menu-item')).toHaveFocus());
+          await waitFor(() => expect(document.querySelector(MENU_ITEM)).toHaveFocus());
           expect(shown).toHaveBeenCalledTimes(1);
-          expect(document.querySelectorAll('.op-context-menu--overlay .dropdown')).toHaveLength(1);
+          expect(document.querySelectorAll('op-action-menu')).toHaveLength(1);
           expect(errors).toEqual([]);
         } finally {
           window.removeEventListener('error', collect);
@@ -992,7 +988,7 @@ describe('Context menu focus return', () => {
 
       it('still swallows the companion of a keyboard open that replaces an open menu', async () => {
         fireEvent.contextMenu(cellOf('1', 1));
-        await waitFor(() => expect(document.querySelector('.op-context-menu--overlay .menu-item')).toHaveFocus());
+        await waitFor(() => expect(document.querySelector(MENU_ITEM)).toHaveFocus());
 
         fireEvent.keyDown(harness.row('2'), { key: 'F10', shiftKey: true });
 
