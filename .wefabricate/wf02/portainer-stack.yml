@@ -18,7 +18,9 @@ services:
     expose:
       - "80"
     environment:
-      OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET_KEY_BASE}
+      # Rails reads SECRET_KEY_BASE, and 02-secret_key_base_check.rb refuses to boot
+      # while it still holds the image's OVERWRITE_ME default.
+      SECRET_KEY_BASE: ${OPENPROJECT_SECRET_KEY_BASE}
       OPENPROJECT_HOST__NAME: openproject.wf02.wefabricate.cn
       OPENPROJECT_HTTPS: "true"
       OPENPROJECT_DEFAULT__LANGUAGE: zh-CN
