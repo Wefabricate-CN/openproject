@@ -25,7 +25,7 @@
 // See COPYRIGHT and LICENSE files for more details.
 //++
 
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, Injector, Input, OnInit, Output, ViewEncapsulation, OnDestroy, DestroyRef, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, Injector, Input, OnInit, Output, ViewEncapsulation, OnDestroy, DestroyRef, inject, signal } from '@angular/core';
 import { QueryResource } from 'core-app/features/hal/resources/query-resource';
 import { I18nService } from 'core-app/core/i18n/i18n.service';
 import {
@@ -45,7 +45,7 @@ import { WorkPackageTimelineTableController } from 'core-app/features/work-packa
 import { headerRowKey } from 'core-app/features/work-packages/components/wp-fast-table/row-keys';
 import { WorkPackageTable } from 'core-app/features/work-packages/components/wp-fast-table/wp-fast-table';
 import { WorkPackageViewTimelineService } from 'core-app/features/work-packages/routing/wp-view-base/view-services/wp-view-timeline.service';
-import { UntilDestroyedMixin } from 'core-app/shared/helpers/angular/until-destroyed.mixin';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { WorkPackageViewSumService } from 'core-app/features/work-packages/routing/wp-view-base/view-services/wp-view-sum.service';
 import {
   WorkPackageTableConfiguration,
@@ -56,7 +56,7 @@ import { States } from 'core-app/core/states/states.service';
 import { renderedColumns } from 'core-app/features/work-packages/components/wp-fast-table/builders/rendered-columns';
 import { QueryGroupByResource } from 'core-app/features/hal/resources/query-group-by-resource';
 import { WorkPackageViewBaselineService } from 'core-app/features/work-packages/routing/wp-view-base/view-services/wp-view-baseline.service';
-import { QUERY_SORT_BY_DESC } from 'core-app/features/hal/resources/query-sort-by-resource';
+import { QUERY_SORT_BY_DESC, QuerySortByResource } from 'core-app/features/hal/resources/query-sort-by-resource';
 import { primarySortDirection } from 'core-app/features/work-packages/components/wp-table/sort-header/primary-sort-direction';
 
 export interface WorkPackageFocusContext {
@@ -64,6 +64,22 @@ export interface WorkPackageFocusContext {
   workPackageId:string;
   /** Through what action did the focus happen */
   through:'row-double-click'|'id-click'|'details-icon';
+}
+
+interface TableViewState {
+  query:QueryResource|undefined;
+  results:WorkPackageCollectionResource;
+  groupBy:QueryGroupByResource|null;
+  columns:QueryColumn[];
+  sortBy:QuerySortByResource[];
+  sumVisible:boolean;
+  timelineVisible:boolean;
+  manualSortEnabled:boolean;
+  baselineEnabled:boolean;
+  limitedResults:boolean;
+  sortDescription:string;
+  trailingColumnRendered:boolean;
+  numTableColumns:number;
 }
 
 @Component({
@@ -75,7 +91,7 @@ export interface WorkPackageFocusContext {
   selector: 'wp-table',
   standalone: false,
 })
-export class WorkPackagesTableComponent extends UntilDestroyedMixin implements OnInit, TableEventComponent, OnDestroy {
+export class WorkPackagesTableComponent implements OnInit, TableEventComponent, OnDestroy {
   private readonly destroyRef = inject(DestroyRef);
 
   readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -114,8 +130,6 @@ export class WorkPackagesTableComponent extends UntilDestroyedMixin implements O
 
   public tbody:HTMLTableSectionElement;
 
-  public query:QueryResource;
-
   public timeline:HTMLElement;
 
   public locale:string;
@@ -131,31 +145,15 @@ export class WorkPackagesTableComponent extends UntilDestroyedMixin implements O
     configurationHeader:string;
   };
 
-  public results:WorkPackageCollectionResource;
+  private readonly viewStateValue = signal<TableViewState|null>(null);
 
-  public groupBy:QueryGroupByResource|null;
+  readonly viewState = this.viewStateValue.asReadonly();
 
-  public columns:QueryColumn[];
-
-  public numTableColumns:number;
-
-  public trailingColumnRendered = true;
-
-  public timelineVisible:boolean;
-
-  public manualSortEnabled:boolean;
-
-  public baselineEnabled:boolean;
-
-  public limitedResults = false;
-
-  public sortDescription = '';
-
-  // We need to sync certain height difference to the timeline
-  // depending on whether inline create or sums rows are being shown
   public inlineCreateVisible = false;
 
-  public sumVisible = false;
+  public get numTableColumns():number {
+    return this.viewState()?.numTableColumns ?? 0;
+  }
 
   ngOnInit():void {
     this.configuration = new WorkPackageTableConfiguration(this.configurationObject);
@@ -188,27 +186,27 @@ export class WorkPackagesTableComponent extends UntilDestroyedMixin implements O
     ]);
 
     statesCombined.pipe(
-      this.untilDestroyed(),
-    ).subscribe(([results, groupBy, columns, timelines, _sort, sums]) => {
-      this.query = this.querySpace.query.value!;
-
-      this.results = results;
-      this.sumVisible = sums;
-
-      this.groupBy = groupBy;
-      this.columns = columns;
-
-      const wasTimelineVisible = this.timelineVisible;
-      this.timelineVisible = timelines.visible;
-
-      this.manualSortEnabled = this.wpTableSortBy.isManualSortingMode;
-      this.baselineEnabled = this.wpTableBaseline.isActive();
-      this.limitedResults = this.manualSortEnabled && results.total > results.count;
-
-      this.sortDescription = this.describeSort();
-      const rendered = renderedColumns(this.configuration, this.baselineEnabled);
-      this.trailingColumnRendered = rendered.trailing;
-      this.numTableColumns = rendered.count(this.columns.length);
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(([results, groupBy, columns, timelines, sortBy, sums]) => {
+      const wasTimelineVisible = this.viewState()?.timelineVisible;
+      const manualSortEnabled = this.wpTableSortBy.isManualSortingMode;
+      const baselineEnabled = this.wpTableBaseline.isActive();
+      const rendered = renderedColumns(this.configuration, baselineEnabled);
+      this.viewStateValue.set({
+        query: this.querySpace.query.value,
+        results,
+        groupBy,
+        columns,
+        sortBy,
+        sumVisible: sums,
+        timelineVisible: timelines.visible,
+        manualSortEnabled,
+        baselineEnabled,
+        limitedResults: manualSortEnabled && results.total > results.count,
+        sortDescription: this.describeSort(sortBy, manualSortEnabled),
+        trailingColumnRendered: rendered.trailing,
+        numTableColumns: rendered.count(columns.length),
+      });
 
       if (this.workPackageTable) {
         this.workPackageTable.colspan = this.numTableColumns;
@@ -228,7 +226,6 @@ export class WorkPackagesTableComponent extends UntilDestroyedMixin implements O
     this.workPackageTable?.destroy();
     this.wpTableHoverSync?.deactivate();
     this.scrollSync?.destroy();
-    super.ngOnDestroy();
   }
 
   public registerTimeline(controller:WorkPackageTimelineTableController, timelineBody:HTMLElement) {
@@ -271,7 +268,7 @@ export class WorkPackagesTableComponent extends UntilDestroyedMixin implements O
     onDestroySafely(this.workPackageTable.destroyRef, () => hover.deactivate());
     onDestroySafely(this.workPackageTable.destroyRef, () => scroll.destroy());
     hover.activate();
-    scroll.update(this.timelineVisible);
+    scroll.update(this.viewState()?.timelineVisible ?? false);
 
     this.renderHeader();
   }
@@ -293,7 +290,7 @@ export class WorkPackagesTableComponent extends UntilDestroyedMixin implements O
   }
 
   public ariaSort(column:QueryColumn):'ascending'|'descending'|null {
-    switch (primarySortDirection(this.wpTableSortBy.current, column)) {
+    switch (primarySortDirection(this.viewState()?.sortBy ?? [], column)) {
       case 'asc':
         return 'ascending';
       case 'desc':
@@ -303,10 +300,8 @@ export class WorkPackagesTableComponent extends UntilDestroyedMixin implements O
     }
   }
 
-  private describeSort():string {
-    const sortBy = this.wpTableSortBy.current;
-
-    if (this.wpTableSortBy.isManualSortingMode) {
+  private describeSort(sortBy:QuerySortByResource[], manualSortEnabled:boolean):string {
+    if (manualSortEnabled) {
       return this.I18n.t('js.work_packages.table.sorted_manually');
     }
 
