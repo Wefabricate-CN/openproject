@@ -165,16 +165,23 @@ RUN ./docker/prod/setup/postinstall-onprem.sh && \
   ln -sf ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack && \
   ln -s /app/docker/prod/setup/.irbrc /root/
 
-# Build-only: the app without the parts that get a layer of their own below.
-FROM app-build AS app-build-code
-RUN rm -rf vendor/bundle public/assets
+# Build-only: the app (pruned as for slim: no frontend sources, specs or source maps)
+# split into the parts that get a layer of their own below. Sprockets names its manifest
+# randomly on every build, so it travels with the code and leaves the assets layer stable.
+FROM app-build-slim AS app-build-assets
+RUN rm public/assets/.sprockets-manifest-*.json
+
+FROM app-build-slim AS app-build-code
+RUN mkdir /tmp/manifest && mv public/assets/.sprockets-manifest-*.json /tmp/manifest/ && \
+  rm -rf vendor/bundle public/assets && \
+  mkdir public/assets && mv /tmp/manifest/.sprockets-manifest-*.json public/assets/
 
 FROM all-in-one-base AS all-in-one
 
 # Gems and assets change far less often than the code; a COPY whose content is unchanged
 # hits the cache and keeps its layer digest, even when app-build itself was rebuilt.
-COPY --chown=$APP_USER:$APP_USER --from=app-build /app/vendor/bundle /app/vendor/bundle
-COPY --chown=$APP_USER:$APP_USER --from=app-build /app/public/assets /app/public/assets
+COPY --chown=$APP_USER:$APP_USER --from=app-build-slim /app/vendor/bundle /app/vendor/bundle
+COPY --chown=$APP_USER:$APP_USER --from=app-build-assets /app/public/assets /app/public/assets
 COPY --chown=$APP_USER:$APP_USER --from=app-build-code /app /app
 
 RUN ./docker/prod/setup/postinstall-common.sh && \
