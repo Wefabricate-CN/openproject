@@ -61,27 +61,74 @@ jobs:
     # Until the stack exists (first run), only the image is pushed.
     if: ${{ vars.PORTAINER_STACK_ID_WF02 != '' }}
     runs-on: [self-hosted, wf02]
-    timeout-minutes: 15
+    # a deploy whose layers are new pulls well over a gigabyte over the site link
+    timeout-minutes: 75
+    env:
+      PORTAINER_URL: https://portainer.wf02.wefabricate.cn
+      PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN_WF02 }}
+      STACK_ID: ${{ vars.PORTAINER_STACK_ID_WF02 }}
+      # the Portainer registry entry holding the GHCR pull credentials
+      REGISTRY_NAME: ghcr-wefabricate-cn
+      CONTAINER: openproject
+      HEALTH_URL: https://openproject.wf02.wefabricate.cn/health_checks/default
     steps:
-      # Same steps as wefabricate/reusable-actions portainer-stack-reload-v2, which
-      # a repository outside the wefabricate org cannot call.
-      - name: Trigger Portainer stack reload
-        env:
-          PORTAINER_URL: https://portainer.wf02.wefabricate.cn
-          PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN_WF02 }}
-          STACK_ID: ${{ vars.PORTAINER_STACK_ID_WF02 }}
+      # Portainer responses carry the stack's Env and the container's Env (secrets), and
+      # GitHub only masks registered secrets: keep every response in a variable or file and
+      # print only the fields picked out with jq.
+      - name: Look up the stack
         run: |
           if [ -z "$PORTAINER_TOKEN" ]; then
             echo "Error: secret 'PORTAINER_TOKEN_WF02' is not set."
             exit 1
           fi
-          echo "::add-mask::$PORTAINER_TOKEN"
-
-          # Portainer responses carry the stack's Env (its secrets) and GitHub only masks
-          # registered secrets: keep every response in a variable or file, never print it.
           stack_info=$(curl -k --fail --max-time 30 --connect-timeout 10 --silent --show-error \
             -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/stacks/$STACK_ID")
-          endpoint_id=$(echo "$stack_info" | jq -r '.EndpointId')
+          echo "ENDPOINT_ID=$(echo "$stack_info" | jq -r '.EndpointId')" >> "$GITHUB_ENV"
+
+      # The stack update below answers at once and pulls in the background under its own
+      # deadline, which a full pull over the site link can overrun, leaving the old image
+      # running behind a green job. Pulling first, through the Docker proxy with the client
+      # attached for as long as it takes, leaves the stack update only a manifest check.
+      - name: Pull the new image onto the WF02 host
+        run: |
+          registry_id=$(curl -k --fail --max-time 30 --connect-timeout 10 --silent --show-error \
+            -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/registries" \
+            | jq -r --arg name "$REGISTRY_NAME" '.[] | select(.Name == $name) | .Id')
+          if [ -z "$registry_id" ]; then
+            echo "::error::Portainer has no registry named $REGISTRY_NAME"
+            exit 1
+          fi
+          # Portainer swaps a {"registryId": n} header for that registry's credentials.
+          registry_auth=$(printf '{"registryId":%s}' "$registry_id" | base64 -w0)
+
+          pull_log=$(mktemp -p "${RUNNER_TEMP:-/tmp}")
+          trap 'rm -f "$pull_log"' EXIT
+          started=$(date +%s)
+          curl -k --fail --max-time 4200 --connect-timeout 10 --silent --show-error --no-buffer \
+            -X POST -H "X-API-Key: $PORTAINER_TOKEN" -H "X-Registry-Auth: $registry_auth" \
+            "$PORTAINER_URL/api/endpoints/$ENDPOINT_ID/docker/images/create?fromImage=$IMAGE&tag=$GITHUB_SHA" \
+            > "$pull_log"
+
+          # Docker reports a failed pull inside a 200 stream.
+          if jq -e -s 'map(select(.error != null)) | length > 0' "$pull_log" > /dev/null; then
+            echo "::error::Pull failed: $(jq -r -s 'map(.error // empty) | first' "$pull_log")"
+            exit 1
+          fi
+          downloaded=$(jq -r -s '[.[] | select(.status == "Pull complete")] | length' "$pull_log")
+          cached=$(jq -r -s '[.[] | select(.status == "Already exists")] | length' "$pull_log")
+          echo "Pulled $IMAGE:$GITHUB_SHA in $(( $(date +%s) - started )) s: $downloaded layers downloaded, $cached already on the host."
+
+          image_id=$(curl -k --fail --max-time 30 --connect-timeout 10 --silent --show-error \
+            -H "X-API-Key: $PORTAINER_TOKEN" \
+            "$PORTAINER_URL/api/endpoints/$ENDPOINT_ID/docker/images/$IMAGE:$GITHUB_SHA/json" | jq -r '.Id')
+          echo "IMAGE_ID=$image_id" >> "$GITHUB_ENV"
+
+      # Same request as wefabricate/reusable-actions portainer-stack-reload-v2, which a
+      # repository outside the wefabricate org cannot call.
+      - name: Trigger Portainer stack reload
+        run: |
+          stack_info=$(curl -k --fail --max-time 30 --connect-timeout 10 --silent --show-error \
+            -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/stacks/$STACK_ID")
           stack_env=$(echo "$stack_info" | jq '.Env // []')
 
           stack_file=$(curl -k --fail --max-time 30 --connect-timeout 10 --silent --show-error \
@@ -95,11 +142,10 @@ jobs:
           jq -n --arg content "$stack_file_content" --argjson env "$stack_env" \
             '{stackFileContent: $content, env: $env, prune: false, PullImage: true}' > "$body_file"
 
-          # pulling a ~2 GB image over the site link takes a while on the first deploy
           if ! curl -k --fail-with-body --max-time 840 --connect-timeout 10 --silent --show-error \
             -X PUT -H "X-API-Key: $PORTAINER_TOKEN" -H "Content-Type: application/json" \
             --data-binary "@$body_file" --output "$response_file" \
-            "$PORTAINER_URL/api/stacks/$STACK_ID?endpointId=$endpoint_id"; then
+            "$PORTAINER_URL/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID"; then
             reason=$(jq -r '[.message, .details] | map(select(. != null and . != "")) | join(": ")' "$response_file" 2>/dev/null \
               || head -c 500 "$response_file")
             echo "::error::Redeploy of stack $STACK_ID failed: $reason"
@@ -108,4 +154,26 @@ jobs:
 
           # the response is the full stack object including Env: print only the identity fields
           jq -c '{Id, Name, Status}' "$response_file"
-          echo "Stack reloaded successfully."
+
+      # The reload is asynchronous, so a green request proves nothing: wait until the
+      # container runs the pulled image and the application answers its health check.
+      - name: Verify the new image is serving
+        run: |
+          deadline=$(( $(date +%s) + 1200 ))
+          while :; do
+            running=$(curl -k --max-time 30 --connect-timeout 10 --silent \
+              -H "X-API-Key: $PORTAINER_TOKEN" \
+              "$PORTAINER_URL/api/endpoints/$ENDPOINT_ID/docker/containers/$CONTAINER/json" \
+              | jq -r '"\(.Image // "") \(.State.Status // "")"' 2>/dev/null || true)
+            health=$(curl -k --max-time 15 --connect-timeout 10 --silent "$HEALTH_URL" || true)
+            if [ "${running% *}" = "$IMAGE_ID" ] && [ "${running#* }" = "running" ] \
+              && echo "$health" | grep -q 'PASSED'; then
+              echo "$CONTAINER runs ${IMAGE_ID:7:12} and passes $HEALTH_URL"
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::After 20 min $CONTAINER runs ${running% *} (${running#* }), not $IMAGE_ID; health: ${health:0:200}"
+              exit 1
+            fi
+            sleep 15
+          done
